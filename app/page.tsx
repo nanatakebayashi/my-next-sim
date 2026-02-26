@@ -272,7 +272,7 @@ export default function Home() {
                 width={80}
               />
               <Tooltip
-                formatter={(value: number) => [
+                formatter={(value: any) => [
                   `${Math.round(value / 10000).toLocaleString()}万円`,
                   "純資産",
                 ]}
