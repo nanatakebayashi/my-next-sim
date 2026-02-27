@@ -15,8 +15,9 @@ import {
 
 export default function Home() {
   const [params, setParams] = useState({
-    budget: 300000,
-    yieldRate: 5,
+    income: 500000,
+    livingCost: 150000,
+    yieldRate: 5, // 収入と生活費のパラメータに変更
     rentCost: 120000,
     rentInitial: 500000,
     rentRenewal: 1,
@@ -69,8 +70,7 @@ export default function Home() {
     );
   };
 
-  // データとサマリーの計算
-  const { chartData, summary } = useMemo(() => {
+  const { chartData, summary, cashFlow } = useMemo(() => {
     const yieldRateMonthly = params.yieldRate / 100 / 12;
     const urbanP = params.urbanPrice * 10000;
     const suburbP = params.suburbPrice * 10000;
@@ -92,7 +92,48 @@ export default function Home() {
       params.loanYears,
     );
 
-    // 投資残高の初期化
+    const propTaxMonthly = params.propTax / 12;
+
+    // 初年度の月額キャッシュフロー（収入 - 生活費 - 住居費 = 投資額）
+    const initialUrbanCost = urbanLoan + params.urbanMaint + propTaxMonthly;
+    const initialSuburbCost = suburbLoan + params.suburbMaint + propTaxMonthly;
+    const initialHouseCost = houseLoan + params.houseMaint + propTaxMonthly;
+
+    const cf = {
+      rent: {
+        cost: params.rentCost,
+        living: params.livingCost,
+        invest: Math.max(
+          0,
+          params.income - params.livingCost - params.rentCost,
+        ),
+      },
+      urban: {
+        cost: initialUrbanCost,
+        living: params.livingCost,
+        invest: Math.max(
+          0,
+          params.income - params.livingCost - initialUrbanCost,
+        ),
+      },
+      suburb: {
+        cost: initialSuburbCost,
+        living: params.livingCost,
+        invest: Math.max(
+          0,
+          params.income - params.livingCost - initialSuburbCost,
+        ),
+      },
+      house: {
+        cost: initialHouseCost,
+        living: params.livingCost,
+        invest: Math.max(
+          0,
+          params.income - params.livingCost - initialHouseCost,
+        ),
+      },
+    };
+
     let investBalances = {
       rent: -params.rentInitial,
       urban: -(urbanP * (params.initialCostRate / 100)),
@@ -100,7 +141,6 @@ export default function Home() {
       house: -(houseP * (params.initialCostRate / 100)),
     };
 
-    // 生涯住居費（コスト）の初期化
     let totalCosts = {
       rent: params.rentInitial,
       urban: urbanP * (params.initialCostRate / 100),
@@ -118,7 +158,6 @@ export default function Home() {
             params.rentCost +
             (isRenewal ? params.rentCost * params.rentRenewal : 0);
           const stepUpMaint = y > 20 ? 20000 : y > 10 ? 10000 : 0;
-          const propTaxMonthly = params.propTax / 12;
 
           const urbanCost =
             urbanLoan + params.urbanMaint + stepUpMaint + propTaxMonthly;
@@ -126,17 +165,28 @@ export default function Home() {
             suburbLoan + params.suburbMaint + stepUpMaint + propTaxMonthly;
           const houseCost = houseLoan + params.houseMaint + propTaxMonthly;
 
-          // コストの累積
           totalCosts.rent += rentMonthlyCost;
           totalCosts.urban += urbanCost;
           totalCosts.suburb += suburbCost;
           totalCosts.house += houseCost;
 
-          // 投資額の加算と複利計算
-          investBalances.rent += params.budget - rentMonthlyCost;
-          investBalances.urban += params.budget - urbanCost;
-          investBalances.suburb += params.budget - suburbCost;
-          investBalances.house += params.budget - houseCost;
+          // 投資額 = 収入 - 生活費 - 住居費 (マイナスになれば投資ゼロ)
+          investBalances.rent += Math.max(
+            0,
+            params.income - params.livingCost - rentMonthlyCost,
+          );
+          investBalances.urban += Math.max(
+            0,
+            params.income - params.livingCost - urbanCost,
+          );
+          investBalances.suburb += Math.max(
+            0,
+            params.income - params.livingCost - suburbCost,
+          );
+          investBalances.house += Math.max(
+            0,
+            params.income - params.livingCost - houseCost,
+          );
 
           Object.keys(investBalances).forEach((key) => {
             const k = key as keyof typeof investBalances;
@@ -145,7 +195,6 @@ export default function Home() {
           });
         }
 
-        // ローン控除
         if (y <= params.deductionYears) {
           investBalances.urban +=
             calcRemainingLoan(
@@ -226,14 +275,12 @@ export default function Home() {
       data.push({
         year: `${y}年`,
         ...netWorth,
-        // 賃貸との差額（損益分岐点用）
         diffUrban: netWorth.urban - netWorth.rent,
         diffSuburb: netWorth.suburb - netWorth.rent,
         diffHouse: netWorth.house - netWorth.rent,
       });
     }
 
-    // 35年後の最終サマリーデータ
     const finalData = data[35];
     const summaryData = {
       rent: {
@@ -262,268 +309,405 @@ export default function Home() {
       },
     };
 
-    return { chartData: data, summary: summaryData };
+    return { chartData: data, summary: summaryData, cashFlow: cf };
   }, [params]);
 
-  return (
-    <div className="min-h-screen bg-slate-100 p-4 md:p-8 text-slate-800 font-sans">
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* ヘッダー＆入力エリア */}
-        <div className="bg-white p-6 rounded-2xl shadow border border-slate-200">
-          <h1 className="text-2xl md:text-3xl font-extrabold mb-2 text-slate-900">
-            🏢 購入 vs 賃貸 徹底シミュレーター
-          </h1>
-          <p className="text-sm text-slate-500 mb-6">
-            数値を変更すると、純資産・損益分岐点・収支サマリーがすべてリアルタイムに更新されます。
-          </p>
+  const colors = {
+    rent: "#6366f1", // Indigo
+    urban: "#334155", // Slate
+    suburb: "#0d9488", // Teal
+    house: "#d97706", // Amber
+  };
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-blue-50 p-3 rounded-lg">
-              <h3 className="font-bold border-b border-blue-200 pb-1 mb-2 text-blue-800 text-sm">
-                📊 基本・投資
+  return (
+    <div className="min-h-screen bg-[#f8fafc] p-4 md:p-8 text-slate-800 font-sans selection:bg-indigo-100">
+      <div className="max-w-7xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+            Purchase vs. Rent Financial Analyzer
+          </h1>
+          <p className="text-sm text-slate-500 mt-1">
+            不動産購入と賃貸における35年間の純資産推移・損益分岐点シミュレーション
+          </p>
+        </div>
+
+        {/* Input Parameters */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+          <h2 className="text-sm font-semibold text-slate-800 uppercase tracking-wider mb-4 border-b pb-2">
+            Simulation Parameters
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-6">
+            <div className="space-y-3">
+              <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+                Income & Lifestyle
               </h3>
-              <label className="flex justify-between text-xs mb-1">
-                予算/月:{" "}
+              <div className="flex justify-between items-center text-sm">
+                <span>月額総収入(手取り)</span>
                 <input
                   type="number"
-                  name="budget"
-                  value={params.budget}
+                  name="income"
+                  value={params.income}
                   onChange={handleChange}
-                  className="border rounded w-20 text-right"
+                  className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-24 py-1"
                 />
-              </label>
-              <label className="flex justify-between text-xs">
-                利回り(%):{" "}
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <span>生活費(住居費以外)</span>
+                <input
+                  type="number"
+                  name="livingCost"
+                  value={params.livingCost}
+                  onChange={handleChange}
+                  className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-24 py-1"
+                />
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <span>投資利回り(年利%)</span>
                 <input
                   type="number"
                   name="yieldRate"
                   value={params.yieldRate}
                   step="0.1"
                   onChange={handleChange}
-                  className="border rounded w-20 text-right"
+                  className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-16 py-1"
                 />
-              </label>
+              </div>
             </div>
-            <div className="bg-green-50 p-3 rounded-lg">
-              <h3 className="font-bold border-b border-green-200 pb-1 mb-2 text-green-800 text-sm">
-                🔑 賃貸
+
+            <div className="space-y-3">
+              <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+                Rent Settings
               </h3>
-              <label className="flex justify-between text-xs mb-1">
-                家賃/月:{" "}
+              <div className="flex justify-between items-center text-sm">
+                <span>月額家賃 (円)</span>
                 <input
                   type="number"
                   name="rentCost"
                   value={params.rentCost}
                   onChange={handleChange}
-                  className="border rounded w-20 text-right"
+                  className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-24 py-1"
                 />
-              </label>
-              <label className="flex justify-between text-xs mb-1">
-                初期費用:{" "}
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <span>初期費用 (円)</span>
                 <input
                   type="number"
                   name="rentInitial"
                   value={params.rentInitial}
                   onChange={handleChange}
-                  className="border rounded w-20 text-right"
+                  className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-24 py-1"
                 />
-              </label>
+              </div>
             </div>
-            <div className="bg-orange-50 p-3 rounded-lg">
-              <h3 className="font-bold border-b border-orange-200 pb-1 mb-2 text-orange-800 text-sm">
-                🏦 購入共通
+
+            <div className="space-y-3">
+              <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+                Mortgage & Taxes
               </h3>
-              <label className="flex justify-between text-xs mb-1">
-                金利(%):{" "}
+              <div className="flex justify-between items-center text-sm">
+                <span>金利 (%)</span>
                 <input
                   type="number"
                   name="loanRate"
                   value={params.loanRate}
                   step="0.1"
                   onChange={handleChange}
-                  className="border rounded w-16 text-right"
+                  className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-16 py-1"
                 />
-              </label>
-              <label className="flex justify-between text-xs mb-1">
-                固定資産税/年:{" "}
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <span>固定資産税 (年額)</span>
                 <input
                   type="number"
                   name="propTax"
                   value={params.propTax}
                   onChange={handleChange}
-                  className="border rounded w-20 text-right"
+                  className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-24 py-1"
                 />
-              </label>
+              </div>
             </div>
-            <div className="bg-purple-50 p-3 rounded-lg">
-              <h3 className="font-bold border-b border-purple-200 pb-1 mb-2 text-purple-800 text-sm">
-                🏙️ 物件価格(万円) / 残存価値
+
+            <div className="space-y-3">
+              <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+                Property Values
               </h3>
-              <label className="flex justify-between text-xs mb-1 text-red-600 font-bold">
-                都会:{" "}
-                <input
-                  type="number"
-                  name="urbanPrice"
-                  value={params.urbanPrice}
-                  onChange={handleChange}
-                  className="border rounded w-16 text-right font-normal text-black"
-                />
-                万 /{" "}
-                <input
-                  type="number"
-                  name="urbanRes"
-                  value={params.urbanRes}
-                  onChange={handleChange}
-                  className="border rounded w-12 text-right font-normal text-black"
-                />
-                %
-              </label>
-              <label className="flex justify-between text-xs mb-1 text-emerald-600 font-bold">
-                郊外:{" "}
-                <input
-                  type="number"
-                  name="suburbPrice"
-                  value={params.suburbPrice}
-                  onChange={handleChange}
-                  className="border rounded w-16 text-right font-normal text-black"
-                />
-                万 /{" "}
-                <input
-                  type="number"
-                  name="suburbRes"
-                  value={params.suburbRes}
-                  onChange={handleChange}
-                  className="border rounded w-12 text-right font-normal text-black"
-                />
-                %
-              </label>
-              <label className="flex justify-between text-xs font-bold text-amber-500">
-                戸建:{" "}
-                <input
-                  type="number"
-                  name="housePrice"
-                  value={params.housePrice}
-                  onChange={handleChange}
-                  className="border rounded w-16 text-right font-normal text-black"
-                />
-                万 /{" "}
-                <input
-                  type="number"
-                  name="houseRes"
-                  value={params.houseRes}
-                  onChange={handleChange}
-                  className="border rounded w-12 text-right font-normal text-black"
-                />
-                %
-              </label>
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-slate-700">都会分譲</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    name="urbanPrice"
+                    value={params.urbanPrice}
+                    onChange={handleChange}
+                    className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-14 py-1"
+                  />
+                  万
+                  <input
+                    type="number"
+                    name="urbanRes"
+                    value={params.urbanRes}
+                    onChange={handleChange}
+                    className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-10 py-1"
+                  />
+                  %
+                </div>
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-slate-700">郊外分譲</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    name="suburbPrice"
+                    value={params.suburbPrice}
+                    onChange={handleChange}
+                    className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-14 py-1"
+                  />
+                  万
+                  <input
+                    type="number"
+                    name="suburbRes"
+                    value={params.suburbRes}
+                    onChange={handleChange}
+                    className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-10 py-1"
+                  />
+                  %
+                </div>
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-slate-700">戸建て</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    name="housePrice"
+                    value={params.housePrice}
+                    onChange={handleChange}
+                    className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-14 py-1"
+                  />
+                  万
+                  <input
+                    type="number"
+                    name="houseRes"
+                    value={params.houseRes}
+                    onChange={handleChange}
+                    className="border-b border-slate-300 focus:border-indigo-500 outline-none text-right w-10 py-1"
+                  />
+                  %
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* グラフエリア（2カラム） */}
+        {/* Cash Flow Breakdown */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+          <div className="flex justify-between items-end mb-4 border-b pb-2">
+            <h2 className="text-sm font-semibold text-slate-800 uppercase tracking-wider">
+              Initial Monthly Cash Flow
+            </h2>
+            <span className="text-xs text-slate-500">
+              収入 － (生活費 ＋ 住居費) ＝ 投資額
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[
+              {
+                label: "賃貸",
+                key: "rent",
+                data: cashFlow.rent,
+                color: colors.rent,
+              },
+              {
+                label: "分譲 (都会)",
+                key: "urban",
+                data: cashFlow.urban,
+                color: colors.urban,
+              },
+              {
+                label: "分譲 (郊外)",
+                key: "suburb",
+                data: cashFlow.suburb,
+                color: colors.suburb,
+              },
+              {
+                label: "戸建て",
+                key: "house",
+                data: cashFlow.house,
+                color: colors.house,
+              },
+            ].map((item) => (
+              <div
+                key={item.key}
+                className="p-4 rounded-lg bg-slate-50 border border-slate-100 relative overflow-hidden"
+              >
+                <div
+                  className="absolute top-0 left-0 w-1 h-full"
+                  style={{ backgroundColor: item.color }}
+                ></div>
+                <div className="text-xs font-semibold text-slate-700 mb-3 ml-2">
+                  {item.label}
+                </div>
+                <div className="space-y-1 ml-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">住居費:</span>
+                    <span className="text-slate-700">
+                      {Math.round(item.data.cost).toLocaleString()} 円
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">生活費:</span>
+                    <span className="text-slate-700">
+                      {Math.round(item.data.living).toLocaleString()} 円
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm pt-2 mt-2 border-t border-slate-200">
+                    <span className="font-semibold text-slate-800">
+                      投資額:
+                    </span>
+                    <span className="font-bold text-indigo-600">
+                      {Math.round(item.data.invest).toLocaleString()} 円
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* 1. 純資産推移チャート */}
-          <div className="bg-white p-4 rounded-2xl shadow border border-slate-200 h-[400px]">
-            <h3 className="text-lg font-bold text-center mb-2">
-              📈 純資産の推移 (35年間)
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-[400px]">
+            <h3 className="text-sm font-semibold text-slate-800 tracking-wider mb-4">
+              Net Worth Projection (純資産推移)
             </h3>
             <ResponsiveContainer width="100%" height="90%">
               <LineChart
                 data={chartData}
                 margin={{ top: 5, right: 10, bottom: 5, left: 10 }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="year" fontSize={12} />
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  vertical={false}
+                  stroke="#e2e8f0"
+                />
+                <XAxis
+                  dataKey="year"
+                  fontSize={11}
+                  stroke="#94a3b8"
+                  tickMargin={8}
+                />
                 <YAxis
-                  tickFormatter={(val) => `${Math.round(val / 10000)}万円`}
-                  fontSize={12}
-                  width={60}
+                  tickFormatter={(val) => `${Math.round(val / 10000)}M`}
+                  fontSize={11}
+                  stroke="#94a3b8"
+                  width={40}
                 />
                 <Tooltip
                   formatter={(val: any) => [
                     `${Math.round(Number(val) / 10000).toLocaleString()}万円`,
                     "純資産",
                   ]}
+                  contentStyle={{
+                    borderRadius: "8px",
+                    border: "none",
+                    boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                  }}
                 />
-                <Legend />
+                <Legend iconType="circle" wrapperStyle={{ fontSize: "12px" }} />
                 <Line
                   type="monotone"
                   dataKey="rent"
                   name="賃貸"
-                  stroke="#3b82f6"
-                  strokeWidth={3}
+                  stroke={colors.rent}
+                  strokeWidth={2}
                   dot={false}
+                  activeDot={{ r: 4 }}
                 />
                 <Line
                   type="monotone"
                   dataKey="urban"
                   name="分譲(都会)"
-                  stroke="#ef4444"
-                  strokeWidth={3}
+                  stroke={colors.urban}
+                  strokeWidth={2}
                   dot={false}
+                  activeDot={{ r: 4 }}
                 />
                 <Line
                   type="monotone"
                   dataKey="suburb"
                   name="分譲(郊外)"
-                  stroke="#10b981"
-                  strokeWidth={3}
+                  stroke={colors.suburb}
+                  strokeWidth={2}
                   dot={false}
+                  activeDot={{ r: 4 }}
                 />
                 <Line
                   type="monotone"
                   dataKey="house"
                   name="戸建て"
-                  stroke="#f59e0b"
-                  strokeWidth={3}
+                  stroke={colors.house}
+                  strokeWidth={2}
                   dot={false}
+                  activeDot={{ r: 4 }}
                 />
               </LineChart>
             </ResponsiveContainer>
           </div>
 
-          {/* 2. 損益分岐点チャート */}
-          <div className="bg-white p-4 rounded-2xl shadow border border-slate-200 h-[400px]">
-            <h3 className="text-lg font-bold text-center mb-2">
-              ⚖️ 損益分岐点 (賃貸との純資産の差額)
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-[400px]">
+            <h3 className="text-sm font-semibold text-slate-800 tracking-wider mb-4">
+              Breakeven Analysis (賃貸との差額)
             </h3>
             <ResponsiveContainer width="100%" height="90%">
               <LineChart
                 data={chartData}
                 margin={{ top: 5, right: 10, bottom: 5, left: 10 }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="year" fontSize={12} />
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  vertical={false}
+                  stroke="#e2e8f0"
+                />
+                <XAxis
+                  dataKey="year"
+                  fontSize={11}
+                  stroke="#94a3b8"
+                  tickMargin={8}
+                />
                 <YAxis
-                  tickFormatter={(val) => `${Math.round(val / 10000)}万円`}
-                  fontSize={12}
-                  width={60}
+                  tickFormatter={(val) => `${Math.round(val / 10000)}M`}
+                  fontSize={11}
+                  stroke="#94a3b8"
+                  width={40}
                 />
                 <Tooltip
                   formatter={(val: any) => [
                     `${Math.round(Number(val) / 10000).toLocaleString()}万円`,
-                    "賃貸との差額",
+                    "差額",
                   ]}
+                  contentStyle={{
+                    borderRadius: "8px",
+                    border: "none",
+                    boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                  }}
                 />
-                <Legend />
-                {/* ゼロのライン（水面） */}
+                <Legend iconType="circle" wrapperStyle={{ fontSize: "12px" }} />
                 <ReferenceLine
                   y={0}
-                  stroke="#000"
-                  strokeWidth={2}
-                  strokeDasharray="3 3"
+                  stroke="#cbd5e1"
+                  strokeWidth={1}
                   label={{
                     position: "insideTopLeft",
-                    value: "← 賃貸と同等 (損益分岐点)",
-                    fill: "#64748b",
-                    fontSize: 12,
+                    value: "Base (Rent)",
+                    fill: "#94a3b8",
+                    fontSize: 11,
                   }}
                 />
                 <Line
                   type="monotone"
                   dataKey="diffUrban"
                   name="都会 vs 賃貸"
-                  stroke="#ef4444"
+                  stroke={colors.urban}
                   strokeWidth={2}
                   dot={false}
                 />
@@ -531,7 +715,7 @@ export default function Home() {
                   type="monotone"
                   dataKey="diffSuburb"
                   name="郊外 vs 賃貸"
-                  stroke="#10b981"
+                  stroke={colors.suburb}
                   strokeWidth={2}
                   dot={false}
                 />
@@ -539,7 +723,7 @@ export default function Home() {
                   type="monotone"
                   dataKey="diffHouse"
                   name="戸建て vs 賃貸"
-                  stroke="#f59e0b"
+                  stroke={colors.house}
                   strokeWidth={2}
                   dot={false}
                 />
@@ -548,98 +732,110 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 3. 35年間の総収支サマリー表 */}
-        <div className="bg-white p-6 rounded-2xl shadow border border-slate-200 overflow-x-auto">
-          <h3 className="text-xl font-bold mb-4 text-center">
-            📋 35年間の総収支サマリー
-          </h3>
+        {/* 35-Year Summary Table */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+          <h2 className="text-sm font-semibold text-slate-800 uppercase tracking-wider mb-4 border-b pb-2">
+            35-Year Financial Summary
+          </h2>
           <table className="w-full text-sm text-left whitespace-nowrap">
-            <thead className="bg-slate-100 text-slate-600 font-bold border-b-2 border-slate-200">
+            <thead className="text-slate-500 border-b border-slate-200">
               <tr>
-                <th className="p-3">項目 (35年後)</th>
-                <th className="p-3 text-blue-600">賃貸</th>
-                <th className="p-3 text-red-600">分譲 (都会)</th>
-                <th className="p-3 text-emerald-600">分譲 (郊外)</th>
-                <th className="p-3 text-amber-500">戸建て</th>
+                <th className="py-3 px-4 font-medium">項目</th>
+                <th
+                  className="py-3 px-4 font-medium"
+                  style={{ color: colors.rent }}
+                >
+                  賃貸
+                </th>
+                <th
+                  className="py-3 px-4 font-medium"
+                  style={{ color: colors.urban }}
+                >
+                  分譲 (都会)
+                </th>
+                <th
+                  className="py-3 px-4 font-medium"
+                  style={{ color: colors.suburb }}
+                >
+                  分譲 (郊外)
+                </th>
+                <th
+                  className="py-3 px-4 font-medium"
+                  style={{ color: colors.house }}
+                >
+                  戸建て
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
-              <tr className="hover:bg-slate-50">
-                <td className="p-3 font-semibold text-slate-500">
-                  🔻 生涯住居費 (支払総額)
+            <tbody className="divide-y divide-slate-100">
+              <tr className="hover:bg-slate-50 transition-colors">
+                <td className="py-3 px-4 text-slate-500">
+                  生涯住居費 (支払総額)
                 </td>
-                <td className="p-3">
+                <td className="py-3 px-4">
                   {Math.round(summary.rent.cost / 10000).toLocaleString()} 万円
                 </td>
-                <td className="p-3">
+                <td className="py-3 px-4">
                   {Math.round(summary.urban.cost / 10000).toLocaleString()} 万円
                 </td>
-                <td className="p-3">
+                <td className="py-3 px-4">
                   {Math.round(summary.suburb.cost / 10000).toLocaleString()}{" "}
                   万円
                 </td>
-                <td className="p-3">
+                <td className="py-3 px-4">
                   {Math.round(summary.house.cost / 10000).toLocaleString()} 万円
                 </td>
               </tr>
-              <tr className="hover:bg-slate-50 bg-blue-50/30">
-                <td className="p-3 font-semibold text-slate-500">
-                  📈 投資残高 (現金)
-                </td>
-                <td className="p-3">
+              <tr className="hover:bg-slate-50 transition-colors">
+                <td className="py-3 px-4 text-slate-500">投資残高 (現金)</td>
+                <td className="py-3 px-4">
                   {Math.round(summary.rent.invest / 10000).toLocaleString()}{" "}
                   万円
                 </td>
-                <td className="p-3">
+                <td className="py-3 px-4">
                   {Math.round(summary.urban.invest / 10000).toLocaleString()}{" "}
                   万円
                 </td>
-                <td className="p-3">
+                <td className="py-3 px-4">
                   {Math.round(summary.suburb.invest / 10000).toLocaleString()}{" "}
                   万円
                 </td>
-                <td className="p-3">
+                <td className="py-3 px-4">
                   {Math.round(summary.house.invest / 10000).toLocaleString()}{" "}
                   万円
                 </td>
               </tr>
-              <tr className="hover:bg-slate-50">
-                <td className="p-3 font-semibold text-slate-500">
-                  🏠 最終的な不動産価値
-                </td>
-                <td className="p-3 text-slate-400">0 万円</td>
-                <td className="p-3">
+              <tr className="hover:bg-slate-50 transition-colors">
+                <td className="py-3 px-4 text-slate-500">最終不動産価値</td>
+                <td className="py-3 px-4 text-slate-300">-</td>
+                <td className="py-3 px-4">
                   {Math.round(summary.urban.prop / 10000).toLocaleString()} 万円
                 </td>
-                <td className="p-3">
+                <td className="py-3 px-4">
                   {Math.round(summary.suburb.prop / 10000).toLocaleString()}{" "}
                   万円
                 </td>
-                <td className="p-3">
+                <td className="py-3 px-4">
                   {Math.round(summary.house.prop / 10000).toLocaleString()} 万円
                 </td>
               </tr>
-              <tr className="bg-slate-800 text-white font-bold text-base">
-                <td className="p-3 rounded-l-lg">🏆 最終・純資産</td>
-                <td className="p-3 text-blue-300">
+              <tr className="bg-slate-50 font-semibold">
+                <td className="py-4 px-4 text-slate-900">最終純資産</td>
+                <td className="py-4 px-4" style={{ color: colors.rent }}>
                   {Math.round(summary.rent.net / 10000).toLocaleString()} 万円
                 </td>
-                <td className="p-3 text-red-300">
+                <td className="py-4 px-4" style={{ color: colors.urban }}>
                   {Math.round(summary.urban.net / 10000).toLocaleString()} 万円
                 </td>
-                <td className="p-3 text-emerald-300">
+                <td className="py-4 px-4" style={{ color: colors.suburb }}>
                   {Math.round(summary.suburb.net / 10000).toLocaleString()} 万円
                 </td>
-                <td className="p-3 text-amber-300 rounded-r-lg">
+                <td className="py-4 px-4" style={{ color: colors.house }}>
                   {Math.round(summary.house.net / 10000).toLocaleString()} 万円
                 </td>
               </tr>
             </tbody>
           </table>
-          <p className="text-xs text-slate-400 mt-3 text-right">
-            ※純資産 ＝ 投資残高 ＋ 不動産価値 － (ローン残債は35年で完済と仮定)
-            － 売却コスト
-          </p>
         </div>
       </div>
     </div>
